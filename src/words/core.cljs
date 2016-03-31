@@ -75,6 +75,11 @@
   ;; (swap! app-state update-in [:__figwheel_counter] inc)
 )
 
-(defn -main [board & whl] (let [[w h l] (map int whl)]
+(defn -main [board & lwh] (let [[l w h]
+                                (map int
+                                     (if (< (count lwh) 3)
+                                       (list* (first lwh)
+                                              (repeat 2 (.sqrt js/Math (count board))))
+                                       lwh))]
                             (time (find-words l w h board))))
 (set! *main-cli-fn* -main)
