@@ -2,16 +2,13 @@
   (:require [cljs.nodejs :as node]
             clojure.string))
 
-;; (enable-console-print!)
-
 (node/enable-util-print!)
 
 (def fs (cljs.nodejs/require "fs"))
 (def read-dict #(.readFile fs "/usr/share/dict/words" "utf8" %))
 (def dict (clojure.string/split (.readFileSync fs "/usr/share/dict/words" "utf8") "\n"))
 
-;; s implies "size": the size of the board array aka (count board)
-;; l implies "length": the length of a size, i.e. (sqrt s)
+;; up next: sort the dictionary into partial word-buckets, and use those in maybe-word?
 
 (defn index->coords [i w] [(rem i w) (int (/ i w))])
 (defn coords->index [x y w] (+ x (* w y)))
@@ -45,7 +42,7 @@
        (filter #(->> %
                      ->letter
                      (str word)
-                     ;; (maybe-word? dict)
+                     (maybe-word? dict)
                                           ))))
 
 (defn use-index [i board]
@@ -57,8 +54,9 @@
       [word]
       (mapcat
        #(let [new-word (index->word %)
-              new-indices (next-indices % new-word board dict)]
-          (solve (dec len) new-word new-indices (use-index % board) dict))
+              new-dict (drop-while (fn [e] (-> e (compare new-word) (< 0))) dict)
+              new-indices (next-indices % new-word board new-dict)]
+          (solve (dec len) new-word new-indices (use-index % board) new-dict))
        indices))))
 
 (defn find-words [l w h board]
@@ -68,11 +66,10 @@
                           range
                           (filter letters))
                 [w h letters]
-                nil ;; (filter #(= (count %) l) dict)
+                (filter #(= (count %) l) dict)
                 )
-         (filter (->> dict (filter #(= (count %) l)) set))
          set
-         ;; (remove nil?)
+         (remove nil?)
          sort)))
 
 ;; define your app data so that it doesn't get over-written on reload
