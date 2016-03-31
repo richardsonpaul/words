@@ -8,19 +8,13 @@
 
 (def fs (cljs.nodejs/require "fs"))
 (def read-dict #(.readFile fs "/usr/share/dict/words" "utf8" %))
-(def dict (clojure.string/split (.readFileSync fs "/usr/share/dict/words" "utf8") "\n"))
+(def raw-dict (clojure.string/split (.readFileSync fs "/usr/share/dict/words" "utf8") "\n"))
 
 ;; s implies "size": the size of the board array aka (count board)
 ;; l implies "length": the length of a size, i.e. (sqrt s)
 
 (defn index->coords [i w] [(rem i w) (int (/ i w))])
 (defn coords->index [x y w] (+ x (* w y)))
-
-(defn maybe-word?
-  [d word]
-  (let [possible-word (->> d (drop-while #(-> % (compare word) (< 0))) first)]
-    (when possible-word
-      (clojure.string/starts-with? possible-word word))))
 
 (defn adjacent
   [i w h]
@@ -42,37 +36,53 @@
   [i word [w h ->letter] dict]
   (->> (adjacent i w h)
        (filter #(->letter %))
-       (filter #(->> %
-                     ->letter
+       (filter #(->> (->letter %)
                      (str word)
-                     ;; (maybe-word? dict)
-                                          ))))
+                     dict))))
 
 (defn use-index [i board]
   (assoc-in board [2 i] nil))
 
 (defn solve [len word indices board dict]
   (let [index->word #(->> [2 %] (get-in board) (str word))]
-    (if (= len 0)
-      [word]
+    (if (= len 1)
+      (map index->word indices)
       (mapcat
        #(let [new-word (index->word %)
-              new-indices (next-indices % new-word board dict)]
+              new-indices (next-indices % new-word board (-> new-word
+                                                             count
+                                                             inc
+                                                             dict))]
           (solve (dec len) new-word new-indices (use-index % board) dict))
        indices))))
 
+(defn prepare-dictionary [l]
+  (let [dict (->> raw-dict
+                  (filter #(= l (count %)))
+                  (map #(.toLowerCase %)))]
+    (->> (for [i (range 1 (inc l))]
+           (loop [d (map #(.substr % 0 i) dict)
+                  sub-d [(first d)]]
+             (let [existing (peek sub-d)
+                   new-dict (drop-while #(-> % (compare existing) (< 1)) d)]
+               (if (seq new-dict)
+                 (recur new-dict (conj sub-d (first new-dict)))
+                 sub-d))))
+         (cons dict)
+         (map set)
+         vec)))
+
 (defn find-words [l w h board]
-  (let [letters (vec (replace {\- nil} board))]
+  (let [letters (vec (replace {\- nil} board))
+        dict (prepare-dictionary l)]
     (->> (solve l "" (->> board
                           count
                           range
                           (filter letters))
                 [w h letters]
-                nil ;; (filter #(= (count %) l) dict)
-                )
-         (filter (->> dict (filter #(= (count %) l)) set))
+                dict)
+         (filter (dict 0))
          set
-         ;; (remove nil?)
          sort)))
 
 ;; define your app data so that it doesn't get over-written on reload
