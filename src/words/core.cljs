@@ -6,9 +6,7 @@
 
 (def fs (cljs.nodejs/require "fs"))
 (def read-dict #(.readFile fs "/usr/share/dict/words" "utf8" %))
-(def dict (clojure.string/split (.readFileSync fs "/usr/share/dict/words" "utf8") "\n"))
-
-;; up next: sort the dictionary into partial word-buckets, and use those in maybe-word?
+(def raw-dict (clojure.string/split (.readFileSync fs "/usr/share/dict/words" "utf8") "\n"))
 
 (defn index->coords [i w] [(rem i w) (int (/ i w))])
 (defn coords->index [x y w] (+ x (* w y)))
@@ -39,19 +37,17 @@
   [i word [w h ->letter] dict]
   (->> (adjacent i w h)
        (filter #(->letter %))
-       (filter #(->> %
-                     ->letter
+       (filter #(->> (->letter %)
                      (str word)
-                     (maybe-word? dict)
-                                          ))))
+                     (maybe-word? dict)))))
 
 (defn use-index [i board]
   (assoc-in board [2 i] nil))
 
 (defn solve [len word indices board dict]
-  (let [index->word #(->> [2 %] (get-in board) (str word))]
-    (if (= len 0)
-      [word]
+  (let [index->word #(str word (get-in board [2 %]))]
+    (if (= len 1)
+      (map index->word indices)
       (mapcat
        #(let [new-word (index->word %)
               new-dict (drop-while (fn [e] (-> e (compare new-word) (< 0))) dict)
@@ -66,10 +62,9 @@
                           range
                           (filter letters))
                 [w h letters]
-                (filter #(= (count %) l) dict)
-                )
+                (filter #(= (count %) l) raw-dict))
          set
-         (remove nil?)
+         ;; (remove nil?)
          sort)))
 
 ;; define your app data so that it doesn't get over-written on reload
