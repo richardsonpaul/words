@@ -1,20 +1,22 @@
 (ns ^:figwheel-always words.core
   (:require [cljs.nodejs :as node]
-            clojure.string))
-
-;; (enable-console-print!)
+            clojure.string
+            [cljs.core.async :refer [<! >! chan mult tap]])
+  (:require-macros [cljs.core.async.macros :refer [go]]))
 
 (node/enable-util-print!)
 
 (def fs (cljs.nodejs/require "fs"))
 (def read-dict #(.readFile fs "/usr/share/dict/words" "utf8" %))
-(def raw-dict (clojure.string/split (.readFileSync fs "/usr/share/dict/words" "utf8") "\n"))
-
-;; s implies "size": the size of the board array aka (count board)
-;; l implies "length": the length of a size, i.e. (sqrt s)
 
 (defn index->coords [i w] [(rem i w) (int (/ i w))])
 (defn coords->index [x y w] (+ x (* w y)))
+
+(defn maybe-word?
+  [d word]
+  (let [possible-word (->> d (drop-while #(-> % (compare word) (< 0))) first)]
+    (when possible-word
+      (clojure.string/starts-with? possible-word word))))
 
 (defn adjacent
   [i w h]
@@ -38,17 +40,20 @@
        (filter #(->letter %))
        (filter #(->> (->letter %)
                      (str word)
-                     dict))))
+                     ;; (maybe-word? dict)
+                     dict
+                     ))))
 
 (defn use-index [i board]
   (assoc-in board [2 i] nil))
 
 (defn solve [len word indices board dict]
-  (let [index->word #(->> [2 %] (get-in board) (str word))]
+  (let [index->word #(str word (get-in board [2 %]))]
     (if (= len 1)
       (map index->word indices)
       (mapcat
        #(let [new-word (index->word %)
+;;              new-dict (drop-while (fn [e] (-> e (compare new-word) (< 0))) dict)
               new-indices (next-indices % new-word board (-> new-word
                                                              count
                                                              inc
@@ -80,9 +85,11 @@
                           range
                           (filter letters))
                 [w h letters]
+                ;; (filter #(= (count %) l) raw-dict)
                 dict)
-         (filter (dict 0))
          set
+         (filter (dict 0))
+         ;; (remove nil?)
          sort)))
 
 ;; define your app data so that it doesn't get over-written on reload
@@ -93,6 +100,11 @@
   ;; (swap! app-state update-in [:__figwheel_counter] inc)
 )
 
-(defn -main [board & whl] (let [[w h l] (map int whl)]
+(defn -main [board & lwh] (let [[l w h]
+                                (map int
+                                     (if (< (count lwh) 3)
+                                       (list* (first lwh)
+                                              (repeat 2 (.sqrt js/Math (count board))))
+                                       lwh))]
                             (time (find-words l w h board))))
 (set! *main-cli-fn* -main)
