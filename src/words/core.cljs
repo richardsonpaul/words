@@ -8,6 +8,36 @@
 
 (def fs (cljs.nodejs/require "fs"))
 (def read-dict #(.readFile fs "/usr/share/dict/words" "utf8" %))
+(declare prepare-buckets raw-dict)
+
+(let [c (chan)
+      m (mult c)
+      buckets (chan)]
+  (def raw-chan (chan))
+  (tap m raw-chan)
+  (tap m buckets)
+  (defonce dict (atom {}))
+  (go (prepare-buckets (<! buckets)))
+  (read-dict #(go (->> %2
+                       clojure.string/split-lines
+                       (map (fn [w] (.toLowerCase w)))
+                       (>! c)))))
+
+(defn prepare-dictionary [d]
+  (-> (for [i (range 1 (count (first d)))]
+         (loop [sub-d d
+                words []]
+           (if-let [new-d (->> sub-d (drop-while #(.startsWith % (peek words))) seq)]
+             (recur new-d (conj words (.substring (first new-d) 0 i)))
+             (set words))))
+      (conj nil)
+      vec
+      (conj (set d))))
+
+(defn prepare-buckets [raw]
+  (when (-> (count @dict) (= 0))
+    (doseq [l (range 2 25)] ;; highest in dict
+      (swap! dict assoc l (prepare-dictionary (filter #(= l (count %)) raw))))))
 
 (defn index->coords [i w] [(rem i w) (int (/ i w))])
 (defn coords->index [x y w] (+ x (* w y)))
@@ -35,76 +65,53 @@
   i is the index of the last letter of word
   ->letter is the vector of letters
   note: i can be mapped to nil or not, it won't be used"
-  [i word [w h ->letter] dict]
+  [i word [w h ->letter] in-dict?]
   (->> (adjacent i w h)
        (filter #(->letter %))
        (filter #(->> (->letter %)
                      (str word)
-                     ;; (maybe-word? dict)
-                     dict
-                     ))))
+                     in-dict?))))
 
 (defn use-index [i board]
   (assoc-in board [2 i] nil))
 
-(defn solve [len word indices board dict]
+(defn find-words [len word indices board d]
   (let [index->word #(str word (get-in board [2 %]))]
     (if (= len 1)
       (map index->word indices)
       (mapcat
        #(let [new-word (index->word %)
-;;              new-dict (drop-while (fn [e] (-> e (compare new-word) (< 0))) dict)
-              new-indices (next-indices % new-word board (-> new-word
-                                                             count
-                                                             inc
-                                                             dict))]
-          (solve (dec len) new-word new-indices (use-index % board) dict))
+              [new-dict use-word?]
+              (if (vector? d)
+                [d (-> new-word count inc d)]
+                [(drop-while (fn [e] (-> e (compare new-word) (< 0))) d)
+                 (partial maybe-word? new-dict)])
+              new-indices (next-indices % new-word board use-word?)]
+          (find-words (dec len) new-word new-indices (use-index % board) new-dict))
        indices))))
 
-(defn prepare-dictionary [l]
-  (let [dict (->> raw-dict
-                  (filter #(= l (count %)))
-                  (map #(.toLowerCase %)))]
-    (->> (for [i (range 1 (inc l))]
-           (loop [d (map #(.substr % 0 i) dict)
-                  sub-d [(first d)]]
-             (let [existing (peek sub-d)
-                   new-dict (drop-while #(-> % (compare existing) (< 1)) d)]
-               (if (seq new-dict)
-                 (recur new-dict (conj sub-d (first new-dict)))
-                 sub-d))))
-         (cons dict)
-         (map set)
-         vec)))
-
-(defn find-words [l w h board]
-  (let [letters (vec (replace {\- nil} board))
-        dict (prepare-dictionary l)]
-    (->> (solve l "" (->> board
-                          count
-                          range
-                          (filter letters))
-                [w h letters]
-                ;; (filter #(= (count %) l) raw-dict)
-                dict)
+(defn solve [board w h l]
+  (let [letters (vec (replace {\- nil} board))]
+    (->> (find-words l "" (->> board
+                               count
+                               range
+                               (filter letters))
+                     [w h letters]
+                     (or (and (contains? @dict l)
+                              (@dict l))
+                         (filter #(= l (count %)) raw-dict)))
          set
-         (filter (dict 0))
-         ;; (remove nil?)
          sort)))
 
-;; define your app data so that it doesn't get over-written on reload
-
-(defn on-js-reload []
-  ;; optionally touch your app-state to force rerendering depending on
-  ;; your application
-  ;; (swap! app-state update-in [:__figwheel_counter] inc)
-)
-
-(defn -main [board & lwh] (let [[l w h]
-                                (map int
-                                     (if (< (count lwh) 3)
-                                       (list* (first lwh)
-                                              (repeat 2 (.sqrt js/Math (count board))))
-                                       lwh))]
-                            (time (find-words l w h board))))
+(defn -main [board & lwh]
+  (when board
+    (go (defonce raw-dict (<! raw-chan))
+        (let [[l w h]
+              (map int
+                   (if (< (count lwh) 3)
+                     (list* (first lwh)
+                            (repeat 2 (.sqrt js/Math (count board))))
+                     lwh))]
+          (apply println (solve (.toLowerCase board) w h l))
+          (.exit js/process)))))
 (set! *main-cli-fn* -main)
