@@ -87,47 +87,53 @@
           (find-words (dec len) new-word new-indices (use-index % board) (new-dict)))
        indices))))
 
-(defn- maybe-word?
-  [d word]
-  (let [possible-word (->> d (drop-while #(-> % (compare word) (< 0))) first)]
-    (when possible-word
-      (clojure.string/starts-with? possible-word word))))
-
 (defn- new-d [d]
   (fn [w]
-    (let [nd (drop-while #(-> % (compare w) (< 0)) d)]
+    (let [skip-words (fn [nw dict] (drop-while #(-> % (compare nw) (< 0)) dict))
+          nd (skip-words w d)]
          (fn
            ([] (new-d nd))
-           ([nw] (maybe-word? nd nw))))))
+           ([nw] (when-let [possible-word (first (skip-words nw nd))]
+                   (clojure.string/starts-with? possible-word nw)))))))
 
-(defn- dict-fn [l]
-  (or (when-let [d (@dict l)]
+(defn- dict-fn [l d]
+  (or (when-let [dict (and d (d l))]
         (fn this [_]
           (fn
             ([] this)
-            ([w] ((-> w count d) w)))))
+            ([w] ((-> w count dict) w)))))
       (new-d (filter #(= l (count %)) raw-dict))))
 
-(defn solve [board w h l]
-  (let [letters (vec (replace {\- nil} board))]
-    (->> (find-words l "" (->> board
-                               count
-                               range
-                               (filter letters))
-                     [w h letters]
-                     (dict-fn l))
-         set
-         sort)))
+(defn solve
+  ([board w h l optimized]
+   (let [letters (vec (replace {\- nil} board))]
+     (->> (find-words l "" (->> board
+                                count
+                                range
+                                (filter letters))
+                      [w h letters]
+                      (dict-fn l optimized))
+          set
+          sort)))
+  ([b l]
+   (let [s (.sqrt js/Math (count b))]
+     (solve b s s l)))
+  ([b s l]
+   (solve b s s l))
+  ([b w h l]
+   (solve b w h l @dict)))
 
-(defn -main [board & lwh]
+(defn process-solution
+  ([board args]
+   (process-solution board (partial apply println) args))
+  ([board k args]
+   (go (defonce ^:private raw-dict (<! raw-chan))
+       (k (apply solve board args)))))
+
+(defn -main [board & whl]
   (when board
-    (go (defonce ^:private raw-dict (<! raw-chan))
-        (let [[l w h]
-              (map int
-                   (if (< (count lwh) 3)
-                     (list* (first lwh)
-                            (repeat 2 (.sqrt js/Math (count board))))
-                     lwh))]
-          (apply println (solve (.toLowerCase board) w h l))
-          (.exit js/process)))))
+    (process-solution (.toLowerCase board)
+                      #(do (apply println %)
+                           (.exit js/process))
+                      (map int whl))))
 (set! *main-cli-fn* -main)
